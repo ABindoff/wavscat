@@ -1,0 +1,195 @@
+---
+title: "Getting started with wavelet scattering"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting started with wavelet scattering}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7,
+                      fig.height = 4.2, dpi = 110)
+set.seed(1)
+```
+
+```{r setup}
+library(wavscat)
+```
+
+## What the transform does
+
+A spectrogram is a compromise. Widen the analysis window and you resolve
+frequency but smear time; narrow it and you do the reverse. Averaging the
+spectrogram over a longer window to make it robust to small timing differences
+throws away exactly the fine structure that distinguishes one signal from
+another.
+
+Wavelet scattering recovers that structure. It applies a bank of wavelets, takes
+the modulus of each response, and averages, which gives a representation that is
+stable under small deformations. The detail lost to averaging is not discarded:
+it is recovered by applying a second wavelet bank to the envelopes before
+averaging them. The result is a set of coefficients organised by order:
+
+- **Order 0** is the local mean of the signal.
+- **Order 1** is close to a constant-Q spectrogram, smoothed over the averaging
+  scale `T`.
+- **Order 2** describes how each first-order band fluctuates: the amplitude
+  modulation of the energy in that band. This is the part a spectrogram cannot
+  give you, and it is usually where the discriminative information lives.
+
+The representation is non-expansive, stable to time-warping, and locally
+invariant to translation, all without any parameters being learned from data.
+That combination makes it well suited to small datasets, where a learned
+front-end would overfit.
+
+## A first transform
+
+```{r}
+n <- 4096
+t <- seq_len(n)
+# A tone at a fixed frequency whose amplitude wobbles a few times a second.
+carrier <- sin(2 * pi * 0.15 * t)
+envelope <- 1 + 0.7 * sin(2 * pi * 0.004 * t)
+x <- carrier * envelope
+
+S <- scattering(x, J = 8, Q = 8, sr = 8000)
+S
+```
+
+The result holds an array indexed by `[path, time, channel]` and a table
+describing what each path means:
+
+```{r}
+head(scat_meta(S), 4)
+```
+
+`xi1` is the centre frequency of the first-order wavelet in cycles per sample,
+reported in Hz as `xi1_hz` because we supplied `sr`. `xi2` is a *modulation*
+frequency: the rate at which the energy in band `xi1` rises and falls.
+
+## Choosing the parameters
+
+Four numbers control the transform, and they are not equally forgiving.
+
+**`J`** sets the largest wavelet scale, `2^J` samples, and so the lowest
+frequency reached, about `sr / 2^J`.
+
+**`Q`** sets frequency resolution: `Q` wavelets per octave. `Q = 8` separates
+nearby frequencies and suits audio; `Q = 1` gives wide filters that localise
+transients sharply, which is the usual choice for the second order.
+
+**`T`** is the averaging support, and is the one that most often needs
+attention. It sets both the scale of translation invariance and the output
+sampling interval, and it defaults to `2^J`, which for a short recording can
+average away everything of interest. Set it separately, in seconds if you have
+supplied `sr`:
+
+```{r}
+op <- scattering_1d(n = 1800, J = 7, Q = c(8, 1), T_sec = 1, sr = 30)
+op
+```
+
+**`max_order`** should be 2 unless you have a reason otherwise. Check that order
+2 is actually earning its place:
+
+```{r}
+scat_energy(S)
+```
+
+For this amplitude-modulated tone, order 2 carries real energy. For a pure tone
+it would carry almost none, because a constant envelope has nothing to modulate.
+
+## Looking at the filter bank
+
+Before trusting a choice of `J` and `Q`, look at what it produces. The plot
+shows every wavelet against frequency, with the averaging filter in black.
+
+```{r}
+op_audio <- scattering_1d(n = 8192, J = 8, Q = 8, sr = 8000)
+plot(op_audio, lp = TRUE)
+```
+
+The dashed line is the Littlewood-Paley sum, the total power the bank applies at
+each frequency. It should be flat and close to one across the band you care
+about; a dip is a frequency the transform sees only faintly.
+
+## Looking at the coefficients
+
+```{r}
+sweep_signal <- sin(2 * pi * (0.002 + 0.2 * t / n) * t)
+S_sweep <- scattering(sweep_signal, J = 8, Q = 8, sr = 8000)
+plot(scat_log(S_sweep, eps = scat_eps(S_sweep)))
+```
+
+Order 1 read as an image is a scalogram, directly comparable to a constant-Q
+spectrogram. Log compression is nearly always worth applying first; without it a
+few loud paths dominate the colour scale.
+
+## From coefficients to features
+
+Three steps turn coefficients into something a model can use.
+
+```{r}
+S <- scat_renorm(S)                    # divide order 2 by its order-1 parent
+S <- scat_log(S, eps = scat_eps(S))    # compress the dynamic range
+features <- scat_features(S)           # one row per channel, one column per path
+dim(features)
+features[, 1:4]
+```
+
+`scat_renorm()` matters more than it looks. Without it, an order-2 coefficient
+mostly reports how much energy its parent band carried. After it, the
+coefficient reports the *shape* of that band's modulation, largely independent
+of how loud the band was.
+
+The order of these two is not interchangeable: renormalise first, on raw
+magnitudes. `scat_log()` refuses to be undone this way and `scat_renorm()` will
+tell you if you get it backwards.
+
+### Choosing `eps` without leaking
+
+`eps` sets where log compression stops being logarithmic and becomes linear, so
+it has to sit near the noise floor of your coefficients. Deriving it from your
+whole dataset leaks test information into training. Either compute it once on
+training data and pass the same value everywhere, or let a recipe handle it:
+
+```{r, eval = requireNamespace("recipes", quietly = TRUE)}
+library(recipes)
+
+trials <- as.data.frame(matrix(rnorm(20 * 512), nrow = 20))
+trials$group <- rep(c("a", "b"), each = 10)
+
+rec <- recipe(group ~ ., data = trials) |>
+  step_scattering(all_numeric_predictors(), J = 5, Q = 4)
+
+prepped <- prep(rec, training = trials)
+dim(bake(prepped, new_data = NULL))
+```
+
+Inside a recipe, `prep()` sees only the analysis half of each resample, so `eps`
+is learned there and reused unchanged when the assessment half is baked.
+
+## Working with many recordings
+
+Building an operator is the expensive part; applying it is cheap. Build once and
+reuse it. Columns of a matrix are treated as independent channels, which is also
+the efficient way to transform a batch of same-length recordings:
+
+```{r}
+op <- scattering_1d(n = 1024, J = 5, Q = 4)
+batch <- matrix(rnorm(1024 * 50), nrow = 1024)   # 50 recordings
+S_batch <- scat_transform(op, batch)
+dim(S_batch$coef)
+```
+
+Recordings of differing length need to be brought to a common length first; see
+`scat_fit_length()`, and note that resampling changes the time scale while
+trimming and padding do not.
+
+## Where to go next
+
+- `vignette("finger-tapping")` for webcam-rate movement signals.
+- `vignette("ddk-audio")` for speech, and for joint time-frequency scattering,
+  which adds sensitivity to how energy moves *across* frequency rather than just
+  within each band.

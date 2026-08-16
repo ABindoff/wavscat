@@ -1,0 +1,195 @@
+---
+title: "Finger tapping from webcam landmarks"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Finger tapping from webcam landmarks}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7,
+                      fig.height = 4.2, dpi = 110)
+set.seed(2)
+```
+
+```{r setup}
+library(wavscat)
+```
+
+## The signal
+
+A finger-tapping trial recorded on a webcam and landmarked with MediaPipe gives
+a landmark position per frame, at roughly 30 frames per second. The usual signal
+of interest is the distance between two landmarks, most often the thumb tip and
+the index finger tip, which opens and closes once per tap.
+
+Three properties of this data shape everything below. The sampling rate is low,
+so the whole usable band is 0 to 15 Hz. Trials are short, often 10 to 60
+seconds, so there are only a few hundred to a couple of thousand samples.
+And tracking drops frames, so the series has gaps.
+
+Here is a synthetic stand-in with the same character: tapping at about 4 Hz,
+slowing across the trial, with amplitude decrement and a few dropped frames.
+
+```{r}
+sr <- 30
+duration <- 60
+n <- sr * duration
+
+time_s <- seq_len(n) / sr
+rate <- 4.2 - 0.9 * time_s / duration          # tapping slows over the trial
+phase <- 2 * pi * cumsum(rate) / sr
+amplitude <- 1 - 0.35 * time_s / duration      # and gets smaller
+gap <- 0.5 * (1 + cos(phase)) * amplitude
+gap <- gap + rnorm(n, sd = 0.02)               # tracking jitter
+
+# MediaPipe drops frames now and then.
+gap[sample(seq(2, n - 1), 40)] <- NA
+sum(is.na(gap))
+```
+
+## Preparation
+
+Scattering has no notion of a missing sample, so gaps have to go first.
+`scat_fill_gaps()` interpolates short runs and deliberately leaves long ones
+alone, so that a genuine tracking failure stays visible as `NA` rather than
+being quietly invented:
+
+```{r}
+gap <- scat_fill_gaps(gap, max_gap = 5)
+sum(is.na(gap))
+```
+
+If any `NA` remained you would need to decide what to do with that stretch of
+the trial before going further; `scat_transform()` will refuse the signal rather
+than guess.
+
+Trials that differ in length need a common length, because an operator is built
+for one. Prefer trimming or padding to resampling: resampling rescales time, so
+a fast tapper and a slow tapper end up looking alike, which is usually the
+opposite of what you want.
+
+```{r}
+gap <- scat_fit_length(gap, n = 1800, how = "trim", where = "centre")
+```
+
+## Choosing the transform
+
+The `"kinematic"` preset encodes reasonable choices for video-rate movement:
+a largest scale of about four seconds, `Q = c(8, 1)`, and one second of
+averaging.
+
+```{r}
+op <- scat_preset("kinematic", n = 1800, sr = 30)
+op
+```
+
+Two things are worth checking rather than assuming. First, that the band covers
+the tapping rate:
+
+```{r}
+plot(op)
+```
+
+The bank runs from well below 1 Hz up to 12 Hz, so a 2 to 7 Hz tapping rate sits
+comfortably inside it, and the low end reaches slow drift across the trial.
+
+Second, that the averaging is not too aggressive. The default `T` of `2^J` would
+be over four seconds here, which would flatten the very slowing we want to
+measure. The preset uses one second instead, leaving a time axis:
+
+```{r}
+S <- scat_transform(op, gap)
+S
+```
+
+## What the coefficients show
+
+```{r}
+plot(scat_log(S, eps = scat_eps(S)))
+```
+
+The bright band drifting downwards is the tapping rate slowing across the trial.
+That drift is the signal; a single summary number per trial would hide it.
+
+## Features
+
+For a classifier or a mixed model, reduce the time axis:
+
+```{r}
+S <- scat_renorm(S)
+S <- scat_log(S, eps = scat_eps(S))
+features_mean <- scat_features(S, summary = "mean")
+dim(features_mean)
+```
+
+The `"sd"` summary is worth knowing about for this application specifically. It
+measures how much each path fluctuates over the recording, which for a tapping
+trace is a direct measure of rhythm variability:
+
+```{r}
+features_sd <- scat_features(S, summary = "sd", prefix = "sd_")
+features_sd[, 1:4]
+```
+
+Binding the two gives both the average spectral content and its stability:
+
+```{r}
+features_sd$channel <- NULL
+features <- cbind(features_mean, features_sd)
+dim(features)
+```
+
+## Several landmarks at once
+
+You will often have more than one signal per trial: thumb-index distance,
+wrist position, individual landmark coordinates. Pass them as columns and each
+is transformed independently, with the channel carried through to the feature
+table.
+
+```{r}
+wrist_y <- 0.1 * sin(2 * pi * 0.3 * time_s) + rnorm(n, sd = 0.01)
+wrist_y <- scat_fit_length(wrist_y, n = 1800)
+
+channels <- cbind(gap = gap, wrist_y = wrist_y)
+S_multi <- scat_transform(op, channels)
+f_multi <- scat_features(scat_log(scat_renorm(S_multi), eps = 1e-3))
+f_multi[, 1:4]
+```
+
+To get one row per trial rather than one per channel, reshape afterwards, or
+call `scat_features()` per channel with a distinguishing `prefix` and bind the
+results side by side.
+
+## A batch of trials
+
+Build the operator once and transform trials as columns of a matrix. This is
+both simpler and faster than looping.
+
+```{r}
+n_trials <- 40
+batch <- replicate(n_trials, {
+  r <- runif(1, 3, 5.5)
+  x <- 0.5 * (1 + cos(2 * pi * r * seq_len(1800) / sr)) + rnorm(1800, sd = 0.02)
+  x
+})
+dim(batch)
+
+S_batch <- scat_transform(op, batch)
+feat_batch <- scat_features(scat_log(scat_renorm(S_batch), eps = 1e-3))
+dim(feat_batch)
+```
+
+On an ordinary laptop the whole batch takes a couple of seconds, so a study with
+a few hundred trials is not a problem. See `vignette("ddk-audio")` for the case
+where speed does start to matter.
+
+## A note on what to feed the model
+
+The feature table is wide, with roughly as many columns as trials in a small
+study. Use a model that expects that, such as a penalised linear model or a
+partial least squares discriminant, rather than an unregularised one. Order-2
+paths are the numerous ones; if a fitted model puts no weight on them, that is
+useful evidence that `T` is too long or that `J` does not reach the modulation
+rates in your data.

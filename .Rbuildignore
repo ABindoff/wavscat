@@ -1,0 +1,7 @@
+^data-raw$
+^doc$
+^Meta$
+^\.Rproj\.user$
+^.*\.Rproj$
+^\.repro$
+^README\.md$

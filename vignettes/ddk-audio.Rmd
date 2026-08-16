@@ -1,0 +1,209 @@
+---
+title: "DDK audio and joint time-frequency scattering"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{DDK audio and joint time-frequency scattering}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7,
+                      fig.height = 4.2, dpi = 110)
+set.seed(3)
+```
+
+```{r setup}
+library(wavscat)
+```
+
+## The signal
+
+A diadochokinetic task asks a speaker to repeat a syllable, or an alternating
+sequence such as *pa-ta-ka*, as fast and as regularly as they can. What matters
+clinically is the rate, the regularity, and the precision of each articulation.
+All three live in structure that a plain spectrogram averages away: the syllable
+rate is an amplitude modulation of a few hertz imposed on a carrier of hundreds
+to thousands of hertz, and articulatory precision shows up in how sharply
+formants move.
+
+The synthetic stand-in below repeats a syllable-like burst about six times a
+second, with a formant that sweeps within each burst.
+
+```{r}
+sr <- 16000
+duration <- 2
+n <- sr * duration
+t <- seq_len(n)
+time_s <- t / sr
+
+syllable_rate <- 6
+
+# Each syllable runs through its own phase from 0 to 1, so the formant sweeps
+# one way through the syllable and resets, as an articulation does.
+syllable_phase <- (time_s * syllable_rate) %% 1
+burst <- exp(-((syllable_phase - 0.4) / 0.18)^2)   # one burst per syllable
+formant <- 700 + 900 * syllable_phase              # rising formant transition
+x <- sin(2 * pi * cumsum(formant) / sr) * burst
+x <- x + 0.02 * rnorm(n)
+```
+
+## Time scattering
+
+The `"speech"` preset uses a largest scale of about 250 ms, so second-order
+paths reach modulation rates down to roughly 4 Hz, which covers the syllable
+rate. `Q = c(8, 2)` follows Andén and Mallat: `Q1 = 8` resolves nearby
+harmonics, `Q2 = 2` resolves short modulated structures.
+
+```{r}
+op <- scat_preset("speech", n = n, sr = sr)
+op
+```
+
+```{r}
+S <- scat_transform(op, x)
+plot(scat_log(S, eps = scat_eps(S)))
+```
+
+The horizontal banding at the formant frequency, pulsing at the syllable rate,
+is what we expect. The syllable rate itself is recorded in the second-order
+coefficients. We can find it by asking which modulation frequency carries the
+most order-2 energy:
+
+```{r}
+meta <- scat_meta(S)
+o2 <- which(meta$order == 2L)
+energy_by_mod <- tapply(rowSums(S$coef[o2, , 1]^2), meta$xi2_hz[o2], sum)
+mod_hz <- as.numeric(names(energy_by_mod))
+mod_hz[which.max(energy_by_mod)]
+```
+
+That lands on the second-order band nearest the 6 Hz we built in, which with
+`Q2 = 2` is the closest the bank can resolve. This is the quantity a first-order
+representation cannot report at all.
+
+## Why joint scattering, for this signal
+
+Time scattering treats each frequency band separately. It records that the
+energy at 900 Hz pulses six times a second, and that the energy at 1200 Hz does
+too, but not that the two are part of a single formant sweeping upwards. A
+rising sweep and a falling sweep produce nearly identical time-scattering
+coefficients.
+
+Joint time-frequency scattering adds a second filter bank running along the
+log-frequency axis, so the second order convolves jointly in time and frequency.
+Its wavelets come in two *spins*: positive responds to spectral energy drifting
+upwards, negative to drifting downwards.
+
+```{r}
+op_j <- scattering_jtfs(n = n, J = 10, J_fr = 3, Q = 8, sr = sr)
+op_j
+```
+
+To see the spin at work, compare the signal with its time reversal, which turns
+every rising sweep into a falling one:
+
+```{r}
+meta_j <- scat_meta(op_j)
+o2 <- meta_j$order == 2L
+
+spin_energy <- function(signal) {
+  co <- scat_transform(op_j, signal)$coef
+  c(up = sum(co[o2 & meta_j$spin == 1, , 1]^2),
+    down = sum(co[o2 & meta_j$spin == -1, , 1]^2))
+}
+
+forward <- spin_energy(x)
+reversed <- spin_energy(rev(x))
+round(c(forward = forward[["up"]] / forward[["down"]],
+        reversed = reversed[["up"]] / reversed[["down"]]), 3)
+```
+
+The forward signal puts roughly seven times as much energy on the up spin; the
+reversed one inverts that. Time scattering does not merely separate them less
+well, it cannot separate them at all by path energy: reversing a signal reverses
+each path's time course and leaves its total energy untouched.
+
+```{r}
+path_energy <- function(op, signal) rowSums(scat_transform(op, signal)$coef[, , 1]^2)
+
+relative_difference <- function(op) {
+  a <- path_energy(op, x)
+  b <- path_energy(op, rev(x))
+  sum(abs(a - b)) / sum(a)
+}
+
+c(time = relative_difference(op), joint = relative_difference(op_j))
+```
+
+Exactly zero against a substantial difference. That is the case for joint
+scattering in one line.
+
+### One trap worth knowing
+
+Do not use `T = "global"` with joint scattering. Global averaging sums over the
+reflection-padded signal, and the mirror image of a rising sweep is a falling
+one, so the two spins receive equal energy and the asymmetry cancels almost
+exactly. Keep `T` local and reduce the time axis afterwards:
+
+```{r}
+features <- scat_features(scat_log(scat_renorm(scat_transform(op_j, x)),
+                                   eps = 1e-4),
+                          summary = "mean")
+dim(features)
+```
+
+This applies to `scattering_1d()` too, though less dramatically: `T = "global"`
+double-counts samples near each end rather than cancelling anything.
+
+## Two output formats
+
+`format = "time"`, the default, returns one series per
+`(band, modulation, spin)` path, stacking into the same shape as time scattering
+and feeding the same downstream functions. `format = "joint"` keeps the
+frequency axis, giving a two-dimensional image per path, which is what a
+convolutional model would want:
+
+```{r}
+op_joint <- scattering_jtfs(n = n, J = 10, J_fr = 3, Q = 8, sr = sr,
+                            format = "joint")
+S_joint <- scat_transform(op_joint, x)
+dim(S_joint$coef)   # [path, band, time, channel]
+```
+
+Note that `scat_features()` and the scalogram plot expect `format = "time"`;
+joint output has a frequency axis that does not flatten to one value per path.
+
+## Cost
+
+Joint scattering is much more expensive than time scattering, and this package
+computes everything in base R. Rough figures on an ordinary laptop, for a single
+recording:
+
+| workload | time |
+|---|---|
+| tapping trace, 1800 samples at 30 Hz | ~20 ms |
+| DDK audio, 10 s at 16 kHz, time scattering | ~1.7 s |
+| DDK audio, 10 s at 44.1 kHz, time scattering | ~4.2 s |
+| 2 s at 16 kHz, joint scattering | ~5.5 s |
+
+Building the operator costs a few seconds at audio lengths, but it happens once
+and is reused across every recording of the same length, so it rarely matters.
+
+For kinematic data none of this is a concern. For a corpus of DDK recordings,
+two things help. Downsample to 16 kHz if you can: speech carries almost nothing
+above 8 kHz, and the saving is better than proportional. And parallelise across
+recordings, which is trivially safe because each is independent:
+
+```{r, eval = FALSE}
+library(future.apply)
+plan(multisession)
+
+op <- scat_preset("speech", n = 160000, sr = 16000)
+all_features <- future_lapply(recordings, function(rec) {
+  scat_features(scat_log(scat_renorm(scat_transform(op, rec)), eps = eps_train))
+})
+```
+
+Use one `eps` computed on training data for every recording, as here, rather
+than one per recording.

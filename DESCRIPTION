@@ -1,0 +1,38 @@
+Package: wavscat
+Title: Wavelet Scattering Transforms for Time Series and Audio
+Version: 0.0.0.9000
+Authors@R: c(
+    person("Aidan", "D. Bindoff", email = "aidan.bindoff@utas.edu.au",
+           role = c("aut", "cre")),
+    person("Kymatio developers", role = "cph",
+           comment = "Filter bank and cascade design, BSD-3-Clause"))
+Description: Computes the wavelet scattering transform of one-dimensional
+    signals: a cascade of Morlet wavelet convolutions, complex modulus and
+    low-pass averaging that yields features stable to deformation and locally
+    invariant to translation. Supports time scattering of order zero, one and
+    two, and joint time-frequency scattering. The filter bank follows the
+    construction of Anden and Mallat (2014) <doi:10.1109/TSP.2014.2326991> as
+    implemented in the 'Kymatio' Python package. Everything is computed in the
+    Fourier domain using base R, so the package has no compiled dependencies.
+License: BSD_3_clause + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Depends:
+    R (>= 4.1)
+Imports:
+    grDevices,
+    graphics,
+    rlang,
+    stats,
+    tibble,
+    utils
+Suggests:
+    recipes,
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+URL: https://github.com/ABindoff/wavscat
+BugReports: https://github.com/ABindoff/wavscat/issues
+Config/roxygen2/version: 8.0.0
