@@ -30,9 +30,12 @@ error from this step.
 \details{
 Apply it before \code{\link[=scat_log]{scat_log()}}, on raw magnitudes.
 
-Time scattering only, for now. Joint time-frequency coefficients are refused,
-because a joint first-order path is filtered along frequency and so is not
-the parent of any second-order path.
+Joint time-frequency coefficients need the Rust engine (\code{\link[=scat_engine]{scat_engine()}}).
+A joint first-order path is filtered along frequency and so is not the
+parent of any second-order path. Instead, each second-order path is divided
+by the time-scattering first-order energy of the bands it spans, passed
+through the same frequential low-pass, which the Rust engine keeps alongside
+the coefficients. With the R engine, joint coefficients are refused.
 }
 \examples{
 S <- scattering(as.numeric(arima.sim(list(ar = 0.9), 2048)), J = 6, Q = 8)

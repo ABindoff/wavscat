@@ -30,7 +30,15 @@ scat_transform <- function(op, x, ...) {
   channels <- colnames(x)
   n_ch <- ncol(x)
 
-  per_channel <- lapply(seq_len(n_ch), function(ch) scat_run(op, x[, ch]))
+  engine <- scat_engine()
+  s1 <- NULL
+  if (engine == "rust") {
+    run <- engine_run(op, x)
+    per_channel <- run$per_channel
+    s1 <- run$s1
+  } else {
+    per_channel <- lapply(seq_len(n_ch), function(ch) scat_run(op, x[, ch]))
+  }
 
   meta <- scat_meta(op)
   # Joint output stacked as an array keeps a frequency axis and drops order
@@ -50,7 +58,16 @@ scat_transform <- function(op, x, ...) {
     assemble_array(per_channel, meta$path, channels)
   }
 
-  new_wavscat_coefs(coef, meta, op, channels)
+  out <- new_wavscat_coefs(coef, meta, op, channels)
+  out$spec$engine <- engine
+  out$spec$numerics <- engine_numerics(engine)
+  if (!is.null(s1)) {
+    # Kept so that scat_renorm() can divide joint second-order paths by the
+    # first-order energy of the bands they span.
+    out$s1 <- s1
+    out$spec$engine_params <- engine_params(op)
+  }
+  out
 }
 
 #' Run whichever cascade the operator describes

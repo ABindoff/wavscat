@@ -89,6 +89,27 @@ Building an operator costs a few seconds at audio lengths, but happens once and
 is reused across every recording of the same length. For audio-scale work,
 parallelise across recordings; each is independent.
 
+## Optional Rust engine
+
+wavscat needs no compiler. If you also install the companion package
+[wavscatengine](https://github.com/ABindoff/wavscat-core/tree/main/r/wavscatengine),
+wavscat uses it automatically: the same Rust code that runs in Python and in
+the browser, so coefficients and features are bit-for-bit identical across
+languages and platforms, and joint scattering is about five times faster
+(the 2 s, 16 kHz example above takes about 1.2 s).
+
+```r
+# Needs Rust (https://rustup.rs) and, on Windows, Rtools and
+# `rustup target add x86_64-pc-windows-gnu`.
+pak::pak("ABindoff/wavscat-core/r/wavscatengine")
+scat_engine()   # "rust" once installed
+```
+
+The two engines agree to about 1e-14 in any case. `options(wavscat.engine =
+"r")` keeps the base R engine; each result records its engine in
+`x$spec$engine`. Renormalising joint time-frequency coefficients with
+`scat_renorm()` needs the Rust engine.
+
 ## References
 
 Andén, J. and Mallat, S. (2014). Deep scattering spectrum. *IEEE Transactions on

@@ -72,10 +72,12 @@ test_that("renormalisation divides each order-2 path by its parent", {
 })
 
 
-test_that("renormalisation refuses joint coefficients rather than mispairing", {
+test_that("the R engine refuses to renormalise joint coefficients", {
+  old <- options(wavscat.engine = "r")
+  on.exit(options(old))
   op <- scattering_jtfs(n = 1024, J = 5, J_fr = 2, Q = 4, out_type = "list")
   S <- scat_transform(op, sin(seq_len(1024) / 7))
-  expect_error(scat_renorm(S), "does not yet support joint")
+  expect_error(scat_renorm(S), "install 'wavscatengine'")
 })
 
 
@@ -99,7 +101,9 @@ test_that("renormalisation removes the effect of overall amplitude on order 2", 
   # for bands that carry no energy.
   a <- scat_renorm(scat_transform(op, x), eps = 0)$coef[o2, , 1]
   b <- scat_renorm(scat_transform(op, 25 * x), eps = 0)$coef[o2, , 1]
-  expect_lt(max(abs(a - b)) / max(abs(a)), 1e-9)
+  # Near-silent bands divide rounding by rounding, so the bound depends on the
+  # engine: about 1e-10 with the R engine, 2e-9 with the Rust one.
+  expect_lt(max(abs(a - b)) / max(abs(a)), 1e-8)
 })
 
 
