@@ -72,6 +72,13 @@ test_that("renormalisation divides each order-2 path by its parent", {
 })
 
 
+test_that("renormalisation refuses joint coefficients rather than mispairing", {
+  op <- scattering_jtfs(n = 1024, J = 5, J_fr = 2, Q = 4, out_type = "list")
+  S <- scat_transform(op, sin(seq_len(1024) / 7))
+  expect_error(scat_renorm(S), "does not yet support joint")
+})
+
+
 test_that("renormalisation must come before log compression", {
   S <- make_S()
   expect_error(scat_renorm(scat_log(S)), "Renormalise before log")

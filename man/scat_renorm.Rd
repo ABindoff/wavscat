@@ -29,6 +29,10 @@ error from this step.
 }
 \details{
 Apply it before \code{\link[=scat_log]{scat_log()}}, on raw magnitudes.
+
+Time scattering only, for now. Joint time-frequency coefficients are refused,
+because a joint first-order path is filtered along frequency and so is not
+the parent of any second-order path.
 }
 \examples{
 S <- scattering(as.numeric(arima.sim(list(ar = 0.9), 2048)), J = 6, Q = 8)

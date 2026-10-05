@@ -92,6 +92,10 @@ scat_eps <- function(x, quantile = 0.01) {
 #'
 #' Apply it before [scat_log()], on raw magnitudes.
 #'
+#' Time scattering only, for now. Joint time-frequency coefficients are refused,
+#' because a joint first-order path is filtered along frequency and so is not
+#' the parent of any second-order path.
+#'
 #' @param x A `wavscat_coefs` object.
 #' @param eps Small constant added to the denominator to keep silent bands from
 #'   producing enormous ratios. Note the trade-off: with `eps = 0` the
@@ -109,6 +113,17 @@ scat_eps <- function(x, quantile = 0.01) {
 #' @export
 scat_renorm <- function(x, eps = 1e-12) {
   check_coefs(x)
+  if (identical(x$spec$type, "jtfs")) {
+    # A joint first-order path is itself filtered along frequency, so there
+    # are several per band and none is the parent of a second-order path. The
+    # right denominator, S1 of the bands a path spans through the same
+    # frequential low-pass, is defined in wavscat-core and arrives with the
+    # Rust engine; until then, refuse rather than divide by the wrong thing.
+    stop("scat_renorm() does not yet support joint time-frequency ",
+         "coefficients: their first-order paths are filtered along frequency, ",
+         "so none is the parent of a second-order path. Use scat_log() alone ",
+         "for now.", call. = FALSE)
+  }
   if ("log" %in% x$transforms) {
     stop("Renormalise before log-compressing: dividing log magnitudes does not ",
          "give the intended ratio.", call. = FALSE)
