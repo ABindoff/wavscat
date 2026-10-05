@@ -95,8 +95,8 @@ wavscat needs no compiler. If you also install the companion package
 [wavscatengine](https://github.com/ABindoff/wavscat-core/tree/main/r/wavscatengine),
 wavscat uses it automatically: the same Rust code that runs in Python and in
 the browser, so coefficients and features are bit-for-bit identical across
-languages and platforms, and joint scattering is about five times faster
-(the 2 s, 16 kHz example above takes about 1.2 s).
+languages and platforms, and joint scattering is about four times faster
+(the 2 s, 16 kHz example above takes about 1.3 s instead of 5.7 s).
 
 ```r
 # Needs Rust (https://rustup.rs) and, on Windows, Rtools and
