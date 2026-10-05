@@ -5,3 +5,5 @@
 ^.*\.Rproj$
 ^\.repro$
 ^README\.md$
+^scratch$
+^notes$
