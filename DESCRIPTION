@@ -14,6 +14,8 @@ Description: Computes the wavelet scattering transform of one-dimensional
     construction of Anden and Mallat (2014) <doi:10.1109/TSP.2014.2326991> as
     implemented in the 'Kymatio' Python package. Everything is computed in the
     Fourier domain using base R, so the package has no compiled dependencies.
+    When the optional 'wavscatengine' package is installed, it computes the
+    coefficients instead, bit-for-bit identically to Python and the browser.
 License: BSD_3_clause + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -30,7 +32,8 @@ Suggests:
     recipes,
     testthat (>= 3.0.0),
     knitr,
-    rmarkdown
+    rmarkdown,
+    wavscatengine
 VignetteBuilder: knitr
 Config/testthat/edition: 3
 URL: https://github.com/ABindoff/wavscat

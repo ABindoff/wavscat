@@ -92,6 +92,13 @@ scat_eps <- function(x, quantile = 0.01) {
 #'
 #' Apply it before [scat_log()], on raw magnitudes.
 #'
+#' Joint time-frequency coefficients need the Rust engine ([scat_engine()]).
+#' A joint first-order path is filtered along frequency and so is not the
+#' parent of any second-order path. Instead, each second-order path is divided
+#' by the time-scattering first-order energy of the bands it spans, passed
+#' through the same frequential low-pass, which the Rust engine keeps alongside
+#' the coefficients. With the R engine, joint coefficients are refused.
+#'
 #' @param x A `wavscat_coefs` object.
 #' @param eps Small constant added to the denominator to keep silent bands from
 #'   producing enormous ratios. Note the trade-off: with `eps = 0` the
@@ -115,6 +122,22 @@ scat_renorm <- function(x, eps = 1e-12) {
   }
   if ("renorm" %in% x$transforms) {
     warning("These coefficients have already been renormalised.", call. = FALSE)
+  }
+  if (identical(x$spec$type, "jtfs")) {
+    # A joint first-order path is itself filtered along frequency, so there
+    # are several per band and none is the parent of a second-order path. The
+    # denominator is instead S1 of the bands a path spans, through the same
+    # frequential low-pass, which only the Rust engine keeps.
+    if (is.null(x$s1)) {
+      stop("scat_renorm() on joint time-frequency coefficients needs the ",
+           "first-order energy the Rust engine keeps: install 'wavscatengine' ",
+           "and transform again. Their first-order paths are filtered along ",
+           "frequency, so none is the parent of a second-order path.",
+           call. = FALSE)
+    }
+    x <- jtfs_renorm(x, eps)
+    x$transforms <- c(x$transforms, "renorm")
+    return(x)
   }
   meta <- x$meta
   o2 <- which(meta$order == 2L)
@@ -240,4 +263,53 @@ map_coef <- function(coef, fn) {
   } else {
     lapply(coef, fn)
   }
+}
+
+#' Renormalise joint coefficients through the Rust engine, in any storage
+#'
+#' Rebuilds each channel's paths as matrices aligned with the operator's full
+#' path table (joint arrays omit order zero, so a placeholder stands in), lets
+#' the engine divide the second-order ones, and writes those back.
+#' @noRd
+jtfs_renorm <- function(x, eps) {
+  order <- x$meta$order
+  coef <- x$coef
+  joint_array <- is.array(coef) && length(dim(coef)) == 4L
+  for (ch in seq_along(x$channels)) {
+    paths <- lapply(seq_along(order), function(i) {
+      if (is.array(coef) && !joint_array) {
+        matrix(coef[i, , ch], nrow = 1L)
+      } else if (joint_array) {
+        d <- dim(coef)
+        matrix(coef[i, , , ch], nrow = d[2L], ncol = d[3L])
+      } else {
+        el <- coef[[i]]
+        if (length(dim(el)) == 3L) {
+          d <- dim(el)
+          matrix(el[, , ch], nrow = d[1L], ncol = d[2L])
+        } else {
+          matrix(el[, ch], nrow = 1L)
+        }
+      }
+    })
+    if (joint_array) {
+      # Order zero, which joint arrays drop; the engine leaves it alone.
+      paths <- c(list(matrix(0, 1L, ncol(paths[[1L]]))), paths)
+    }
+    out <- wavscatengine::engine_jtfs_renorm(x$spec$engine_params, paths, x$s1[[ch]], eps)
+    if (joint_array) out <- out[-1L]
+    for (i in which(order == 2L)) {
+      if (is.array(coef) && !joint_array) {
+        coef[i, , ch] <- as.vector(out[[i]])
+      } else if (joint_array) {
+        coef[i, , , ch] <- out[[i]]
+      } else if (length(dim(coef[[i]])) == 3L) {
+        coef[[i]][, , ch] <- out[[i]]
+      } else {
+        coef[[i]][, ch] <- as.vector(out[[i]])
+      }
+    }
+  }
+  x$coef <- coef
+  x
 }

@@ -6,7 +6,7 @@
 \alias{wavscat-package}
 \title{wavscat: Wavelet Scattering Transforms for Time Series and Audio}
 \description{
-Computes the wavelet scattering transform of one-dimensional signals: a cascade of Morlet wavelet convolutions, complex modulus and low-pass averaging that yields features stable to deformation and locally invariant to translation. Supports time scattering of order zero, one and two, and joint time-frequency scattering. The filter bank follows the construction of Anden and Mallat (2014) \doi{10.1109/TSP.2014.2326991} as implemented in the 'Kymatio' Python package. Everything is computed in the Fourier domain using base R, so the package has no compiled dependencies.
+Computes the wavelet scattering transform of one-dimensional signals: a cascade of Morlet wavelet convolutions, complex modulus and low-pass averaging that yields features stable to deformation and locally invariant to translation. Supports time scattering of order zero, one and two, and joint time-frequency scattering. The filter bank follows the construction of Anden and Mallat (2014) \doi{10.1109/TSP.2014.2326991} as implemented in the 'Kymatio' Python package. Everything is computed in the Fourier domain using base R, so the package has no compiled dependencies. When the optional 'wavscatengine' package is installed, it computes the coefficients instead, bit-for-bit identically to Python and the browser.
 }
 \seealso{
 Useful links:
